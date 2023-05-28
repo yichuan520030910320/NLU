@@ -10,21 +10,20 @@ class NLIDataset(Dataset):
         self.labels = labels
 
     def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()} 
-        if self.labels:
-            item['labels'] = torch.tensor(self.labels[idx])
+        item = {key: val[idx].clone().detach() for key, val in self.encodings.items()}
+        if self.labels is not None:
+            item['labels'] = self.labels[idx]
         return item
-
-
 
     def __len__(self):
         return len(self.encodings.input_ids)
+
 
 def load_data(path):
     with open(path, 'r') as f:
         lines = f.read().splitlines()
 
-    sentences = [(json.loads(line)['text_a'], json.loads(line)['text_b']) for line in lines]
+    sentences = [(json.loads(line)['text_a']+ json.loads(line)['text_b']) for line in lines]
     labels = [json.loads(line)['label'] for line in lines] if 'label' in json.loads(lines[0]) else None
 
     return sentences, labels
@@ -44,8 +43,10 @@ test_sentences, test_labels = load_data(test_path)
 
 
 # Convert labels to integers
-label_mapping = {"entailment": 0, "contradiction": 1, "neutral": 2}
+label_mapping = {"entailment": [1, 0, 0], "contradiction": [0, 1, 0], "neutral": [0, 0, 1]}
 train_labels = [label_mapping[label] for label in train_labels]
+train_labels = torch.tensor(train_labels, dtype=torch.float32)  # 使用float32类型而不是long类型
+
 # test_labels = [label_mapping[label] for label in test_labels]
 
 # Tokenize the dataset, this will return a dictionary with the keys input_ids, token_type_ids and attention_mask
@@ -76,16 +77,22 @@ trainer = Trainer(
     train_dataset=train_dataset,         
 )
 
-# Train the model
+## Train the model
 trainer.train()
 
 print('finished training')
-# Make predictions on test set
-predictions = trainer.predict(test_dataset).predictions.argmax(-1)
 
-# Convert numeric predictions to labels
-label_mapping = {0: "entailment", 1: "contradiction", 2: "neutral"}
-predictions = [label_mapping[pred] for pred in predictions]
+# Define the label_mapping
+label_mapping = {
+    (1, 0, 0): "entailment",
+    (0, 1, 0): "contradiction",
+    (0, 0, 1): "neutral"
+}
+
+# Make predictions on test set
+predictions = trainer.predict(test_dataset).predictions
+one_hot_predictions = (predictions == predictions.max(axis=1)[:, None]).astype(int)
+predictions = [label_mapping[tuple(pred)] for pred in one_hot_predictions]
 
 # Write predictions to a CSV file
 output_file = '/home/ycwang/NLI/predictions.csv'
